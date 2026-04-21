@@ -1,0 +1,43 @@
+CLASS lhc_ZI_rap_abook_0309 DEFINITION INHERITING FROM cl_abap_behavior_handler.
+  PRIVATE SECTION.
+
+    METHODS get_instance_authorizations FOR INSTANCE AUTHORIZATION
+      IMPORTING keys REQUEST requested_authorizations FOR ZI_rap_abook_0309 RESULT result.
+
+    METHODS get_global_authorizations FOR GLOBAL AUTHORIZATION
+      IMPORTING REQUEST requested_authorizations FOR ZI_rap_abook_0309 RESULT result.
+    METHODS set_creation_date FOR DETERMINE ON MODIFY
+      IMPORTING keys FOR ZI_rap_abook_0309~set_creation_date.
+
+    METHODS validate_book FOR VALIDATE ON SAVE
+      IMPORTING keys FOR ZI_rap_abook_0309~validate_book.
+
+ENDCLASS.
+
+CLASS lhc_ZI_rap_abook_0309 IMPLEMENTATION.
+
+  METHOD get_instance_authorizations.
+  ENDMETHOD.
+
+  METHOD get_global_authorizations.
+  ENDMETHOD.
+
+  METHOD set_creation_date.
+    " 设置创建时间
+    MODIFY ENTITIES OF ZI_rap_abook_0309 IN LOCAL MODE
+      ENTITY ZI_rap_abook_0309
+      UPDATE
+      FIELDS ( booking_date )
+      WITH VALUE #( FOR key IN keys
+        ( %tky = key-%tky
+          booking_date = '20290909' ) )
+    MAPPED DATA(mapped_update)
+    FAILED DATA(failed_update)
+    REPORTED DATA(reported_update).
+
+  ENDMETHOD.
+
+  METHOD validate_book.
+  ENDMETHOD.
+
+ENDCLASS.
