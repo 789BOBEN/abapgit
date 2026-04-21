@@ -1,0 +1,26 @@
+managed implementation in class zbp_i_rap_abook_0309 unique;
+strict ( 2 );
+
+define behavior for ZI_rap_abook_0309 //alias zdev_test001
+persistent table zrap_abook_0309
+lock master
+authorization master ( instance )
+//etag master <field_name>
+{
+  create ( authorization : global );
+  update;
+  delete;
+
+  validation validate_book on save { field booking_uuid; }
+  determination set_creation_date on modify { create; }
+
+  //field ( readonly ) booking_uuid;
+
+  mapping for zrap_abook_0309{
+      booking_uuid = booking_uuid;
+      travel_uuid   = travel_uuid;
+      travel_id     = travel_id;
+      booking_date  = booking_date;
+  }
+
+}
