@@ -11,8 +11,12 @@ authorization master ( instance )
   update;
   delete;
 
-  validation validate_book on save { field booking_uuid; }
+
+  validation validate_book on save  { field booking_uuid; }
   determination set_creation_date on modify { create; }
+
+  // 自定义审批动作
+  action approve result [1] $self;
 
   //field ( readonly ) booking_uuid;
 
