@@ -11,6 +11,8 @@ CLASS lhc_ZI_rap_abook_0309 DEFINITION INHERITING FROM cl_abap_behavior_handler.
 
     METHODS validate_book FOR VALIDATE ON SAVE
       IMPORTING keys FOR ZI_rap_abook_0309~validate_book.
+    METHODS approve FOR MODIFY
+      IMPORTING keys FOR ACTION ZI_rap_abook_0309~approve RESULT result.
 
 ENDCLASS.
 
@@ -38,6 +40,24 @@ CLASS lhc_ZI_rap_abook_0309 IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD validate_book.
+  ENDMETHOD.
+
+  METHOD approve.
+  " 在某个类或程序中调用
+DATA: lt_keys  TYPE TABLE of ZI_rap_abook_0309,
+    lt_result TYPE TABLE FOR READ RESULT ZI_rap_abook_0309.
+
+
+.
+
+
+    LOOP AT keys INTO DATA(key1).
+         SELECT FROM ZI_rap_abook_0309 as aa
+         FIELDS *
+         where aa~booking_uuid = @key1-booking_uuid
+         into TABLE @DATA(lt_tab).
+
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
