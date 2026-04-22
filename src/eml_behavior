@@ -13,7 +13,7 @@ define behavior for ZC_RAP_ABOOK_0309 //alias <alias_name>
 
 
 
-CLASS lhc_ZI_rap_abook_0309 DEFINITION INHERITING FROM cl_abap_behavior_handler.
+ CLASS lhc_ZI_rap_abook_0309 DEFINITION INHERITING FROM cl_abap_behavior_handler.
   PRIVATE SECTION.
 
     METHODS get_instance_authorizations FOR INSTANCE AUTHORIZATION
@@ -52,6 +52,8 @@ CLASS lhc_ZI_rap_abook_0309 IMPLEMENTATION.
     FAILED DATA(failed_update)
     REPORTED DATA(reported_update).
 
+
+
   ENDMETHOD.
 
   METHOD validate_book.
@@ -60,19 +62,50 @@ CLASS lhc_ZI_rap_abook_0309 IMPLEMENTATION.
   METHOD approve.
   " 在某个类或程序中调用
 DATA: lt_keys  TYPE TABLE of ZI_rap_abook_0309,
-    lt_result TYPE TABLE FOR READ RESULT ZI_rap_abook_0309.
 
+    lt_result TYPE TABLE FOR READ RESULT ZI_rap_abook_0309.
+MODIFY ENTITIES OF ZI_rap_abook_0309 IN LOCAL MODE
+      ENTITY ZI_rap_abook_0309
+      UPDATE
+      FIELDS ( booking_date )
+      WITH VALUE #(
+        ( booking_uuid = '00AC0D82FF408CCC190023E62EB11B24'
+          booking_date = '20500919' ) )
+    MAPPED DATA(mapped_update1)
+    FAILED DATA(failed_update1)
+    REPORTED DATA(reported_update1).
 
 .
 
 
     LOOP AT keys INTO DATA(key1).
+
+    MODIFY ENTITIES OF ZI_rap_abook_0309 IN LOCAL MODE
+      ENTITY ZI_rap_abook_0309
+      UPDATE
+      FIELDS ( booking_date )
+      WITH VALUE #( FOR key IN keys
+        ( %tky = key-%tky
+          booking_date = '20200909' ) )
+    MAPPED DATA(mapped_update)
+    FAILED DATA(failed_update)
+    REPORTED DATA(reported_update).
+
          SELECT FROM ZI_rap_abook_0309 as aa
          FIELDS *
          where aa~booking_uuid = @key1-booking_uuid
          into TABLE @DATA(lt_tab).
 
+    "返回值.
+    result = value #( ( booking_uuid = key1-booking_uuid
+    %param-booking_uuid  = key1-booking_uuid
+    %param-booking_date  = '20300404'
+    ) ).
+
     ENDLOOP.
+
+
+
   ENDMETHOD.
 
 ENDCLASS.
