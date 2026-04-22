@@ -1,0 +1,716 @@
+import Controller from "sap/ui/core/mvc/Controller";
+import ListBinding from "sap/ui/model/ListBinding";
+import MessageToast from "sap/m/MessageToast";
+import Filter from "sap/ui/model/Filter";
+import FilterOperator from "sap/ui/model/FilterOperator";
+import Dialog from "sap/m/Dialog";
+import MessageBox from "sap/m/MessageBox";
+import UI5Event from "sap/ui/base/Event";
+import Input from "sap/m/Input";
+import DatePicker from "sap/m/DatePicker";
+import List from "sap/m/List";
+import * as XLSX from "xlsx";
+import ODataModel from "sap/ui/model/odata/v2/ODataModel";
+
+/**
+ * @namespace prosapui5.controller
+ */
+export default class View1 extends Controller {
+
+    private oDialog: Dialog | undefined;
+    private oSelectedContext: any;
+
+    public onInit(): void {
+        // 初始化时可以添加额外的逻辑
+    }
+
+    public onSearchFieldSearch(oEvent: UI5Event): void {
+        const sQuery = (oEvent as UI5Event & { getParameter: (sName: string) => string | undefined }).getParameter("query");
+        const oList = this.byId("idZcRapAbookList");
+        if (oList) {
+            const oBinding = oList.getBinding("items") as ListBinding;
+            if (oBinding) {
+                if (sQuery) {
+                    oBinding.filter([new Filter("travel_id", FilterOperator.EQ, sQuery)]);
+                } else {
+                    oBinding.filter([]);
+                }
+            }
+        }
+    }
+
+    public onItemPress(oEvent: any): void {
+        const oItem = oEvent.getSource();
+        this.oSelectedContext = oItem.getBindingContext();
+        this.openDialog();
+    }
+
+    public onAddButtonPress(): void {
+        this.oSelectedContext = undefined;
+        this.openDialog();
+    }
+
+    public onEditPress(oEvent: any): void {
+        const oItem = oEvent.getSource().getParent();
+        this.oSelectedContext = oItem.getBindingContext();
+        this.openDialog();
+    }
+
+    public onDeletePress(oEvent: any): void {
+        const oListItem =
+            (oEvent as { getParameter?: (sName: string) => { getBindingContext: () => any } | undefined })
+                .getParameter?.("listItem");
+        const oContext = oListItem?.getBindingContext?.();
+        if (!oContext) {
+            MessageToast.show("Unable to delete: no selected item context.");
+            return;
+        }
+        const sTravelId = oContext.getProperty("travel_id");
+        const sPath = oContext.getPath?.();
+        const oModel = oContext.getModel?.() as
+            | { remove: (sRemovePath: string, mParameters: { success: () => void; error: (oError: { message?: string }) => void }) => void }
+            | undefined;
+
+        MessageBox.confirm(
+            `Are you sure you want to delete booking for Travel ID: ${sTravelId}?`,
+            {
+                actions: [MessageBox.Action.YES, MessageBox.Action.NO],
+                onClose: (sAction) => {
+                    if (sAction === MessageBox.Action.YES) {
+                        if (!oModel || !sPath) {
+                            MessageToast.show("Unable to delete current item.");
+                            return;
+                        }
+                        oModel.remove(sPath, {
+                            success: () => {
+                                MessageToast.show("Booking deleted successfully");
+                            },
+                            error: (oError: { message?: string }) => {
+                                MessageToast.show(`Error deleting booking: ${oError.message ?? "Unknown error"}`);
+                            }
+                        });
+                    }
+                }
+            }
+        );
+    }
+
+    public onSavePress(): void {
+        if (!this.oDialog) {
+            return;
+        }
+
+        if (this.oSelectedContext) {
+            // Update existing record
+            const oModel = this.oSelectedContext.getModel() as {
+                submitChanges: (mParameters: { success: () => void; error: (oError: { message?: string }) => void }) => void;
+            };
+            oModel.submitChanges({
+                success: () => {
+                    MessageToast.show("Booking updated successfully");
+                    this.oDialog?.close();
+                },
+                error: (oError: { message?: string }) => {
+                    MessageToast.show(`Error updating booking: ${oError.message ?? "Unknown error"}`);
+                }
+            });
+        } else {
+            // Create new record
+            const oModel = this.getView()?.getModel() as
+                | {
+                    create: (
+                        sPath: string,
+                        oData: object,
+                        mParameters: { success: () => void; error: (oError: { message?: string }) => void }
+                    ) => void;
+                  }
+                | undefined;
+            const oTravelIdInput = this.byId("travelIdInput") as Input | undefined;
+            const oBookingDateInput = this.byId("bookingDateInput") as DatePicker | undefined;
+            const oTravelUuidInput = this.byId("travelUuidInput") as Input | undefined;
+            if (oModel) {
+                const oBookingDate = oBookingDateInput?.getDateValue();
+                if (!oBookingDate) {
+                    MessageToast.show("Please select a valid booking date.");
+                    return;
+                }
+                const oNewBooking = {
+                    booking_uuid: this.generateUUID(),
+                    travel_id: oTravelIdInput?.getValue(),
+                    booking_date: oBookingDate,
+                    travel_uuid: oTravelUuidInput?.getValue() || this.generateUUID()
+                };
+
+                oModel.create("/ZC_RAP_ABOOK_0309", oNewBooking, {
+                    success: () => {
+                        MessageToast.show("Booking created successfully");
+                        this.oDialog?.close();
+                    },
+                    error: (oError: { message?: string }) => {
+                        MessageToast.show(`Error creating booking: ${oError.message ?? "Unknown error"}`);
+                    }
+                });
+            }
+        }
+    }
+
+    public onExportExcelPress(): void {
+        const oList = this.byId("idZcRapAbookList") as List | undefined;
+        const aItems = oList?.getItems() ?? [];
+        if (!aItems.length) {
+            MessageToast.show("No data to export.");
+            return;
+        }
+
+        const aExportData = aItems
+            .map((oItem) => oItem.getBindingContext()?.getObject() as Record<string, unknown> | undefined)
+            .filter((oItem): oItem is Record<string, unknown> => Boolean(oItem))
+            .map((oItem) => ({
+                booking_uuid: this.stringifyCellValue(oItem.booking_uuid),
+                travel_id: this.stringifyCellValue(oItem.travel_id),
+                booking_date: this.formatDateForExport(oItem.booking_date),
+                travel_uuid: this.stringifyCellValue(oItem.travel_uuid)
+            }));
+
+        const oWorksheet = XLSX.utils.json_to_sheet(aExportData);
+        const oWorkbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(oWorkbook, oWorksheet, "Bookings");
+        XLSX.writeFile(oWorkbook, "bookings.xlsx");
+        MessageToast.show(`Exported ${aExportData.length} record(s).`);
+    }
+
+    public async onImportFileChange(oEvent: UI5Event): Promise<void> {
+        const aFiles =
+            (oEvent as UI5Event & { getParameter: (sName: string) => File[] | FileList | undefined }).getParameter("files");
+        const oFile = aFiles?.[0];
+        if (!oFile) {
+            MessageToast.show("No file selected.");
+            return;
+        }
+
+        const oModel = this.getView()?.getModel() as
+            | {
+                create: (
+                    sPath: string,
+                    oData: object,
+                    mParameters: { success: () => void; error: (oError: { message?: string }) => void }
+                ) => void;
+                refresh: (bForceUpdate: boolean) => void;
+              }
+            | undefined;
+        if (!oModel) {
+            MessageToast.show("Main model is not available.");
+            return;
+        }
+
+        try {
+            const aRows = await this.readExcelRows(oFile);
+            if (!aRows.length) {
+                MessageToast.show("Excel file is empty.");
+                return;
+            }
+
+            const aCreatePromises: Array<Promise<void>> = [];
+            for (const oRow of aRows) {
+                const sTravelId = this.stringifyCellValue(oRow.travel_id ?? oRow.Travel_ID).trim();
+                const oBookingDate = this.parseExcelDate(oRow.booking_date ?? oRow.Booking_Date);
+                const sTravelUuid = this.stringifyCellValue(oRow.travel_uuid ?? oRow.Travel_UUID).trim() || this.generateUUID();
+
+                if (!sTravelId || !oBookingDate) {
+                    continue;
+                }
+
+                const oPayload = {
+                    booking_uuid: this.generateUUID(),
+                    travel_id: sTravelId,
+                    booking_date: oBookingDate,
+                    travel_uuid: sTravelUuid
+                };
+                aCreatePromises.push(
+                    new Promise<void>((resolve, reject) => {
+                        oModel.create("/ZC_RAP_ABOOK_0309", oPayload, {
+                            success: () => resolve(),
+                            error: (oError) => reject(new Error(oError.message ?? "Import failed"))
+                        });
+                    })
+                );
+            }
+
+            if (!aCreatePromises.length) {
+                MessageToast.show("No valid rows found. Required columns: travel_id, booking_date.");
+                return;
+            }
+
+            const aResults = await Promise.allSettled(aCreatePromises);
+            const iSuccessCount = aResults.filter((oResult) => oResult.status === "fulfilled").length;
+            const iErrorCount = aResults.length - iSuccessCount;
+            oModel.refresh(true);
+
+            MessageToast.show(
+                iErrorCount
+                    ? `Imported ${iSuccessCount} row(s), ${iErrorCount} failed.`
+                    : `Imported ${iSuccessCount} row(s) successfully.`
+            );
+        } catch (oError) {
+            const sMessage = oError instanceof Error ? oError.message : "Failed to import Excel file.";
+            MessageBox.error(sMessage);
+        }
+    }
+
+    public onCancelPress(): void {
+        if (this.oDialog) {
+            this.oDialog.close();
+        }
+    }
+
+    private openDialog(): void {
+        this.oDialog = this.byId("bookingDialog") as Dialog;
+        if (this.oDialog) {
+            if (this.oSelectedContext) {
+                this.oDialog.setBindingContext(this.oSelectedContext);
+            } else {
+                // Reset form for new record
+                (this.byId("travelIdInput") as Input | undefined)?.setValue("");
+                (this.byId("bookingDateInput") as DatePicker | undefined)?.setDateValue(null);
+                (this.byId("travelUuidInput") as Input | undefined)?.setValue("");
+            }
+            this.oDialog.open();
+        }
+    }
+
+    private generateUUID(): string {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    private formatDateForExport(vBookingDate: unknown): string {
+        if (vBookingDate instanceof Date) {
+            return vBookingDate.toISOString().slice(0, 10);
+        }
+        if (typeof vBookingDate === "string") {
+            const oParsed = new Date(vBookingDate);
+            if (!Number.isNaN(oParsed.getTime())) {
+                return oParsed.toISOString().slice(0, 10);
+            }
+            return vBookingDate;
+        }
+        if (typeof vBookingDate === "number") {
+            const oDate = new Date(vBookingDate);
+            return Number.isNaN(oDate.getTime()) ? "" : oDate.toISOString().slice(0, 10);
+        }
+        return "";
+    }
+
+    private async readExcelRows(oFile: File): Promise<Array<Record<string, unknown>>> {
+        const oBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+            const oReader = new FileReader();
+            oReader.onload = () => {
+                if (oReader.result instanceof ArrayBuffer) {
+                    resolve(oReader.result);
+                    return;
+                }
+                reject(new Error("Unable to read selected Excel file."));
+            };
+            oReader.onerror = () => reject(new Error("Failed to read selected Excel file."));
+            oReader.readAsArrayBuffer(oFile);
+        });
+
+        const oWorkbook = XLSX.read(oBuffer, { type: "array" });
+        const sSheetName = oWorkbook.SheetNames[0];
+        if (!sSheetName) {
+            return [];
+        }
+
+        return XLSX.utils.sheet_to_json(oWorkbook.Sheets[sSheetName], {
+            defval: ""
+        }) as Array<Record<string, unknown>>;
+    }
+
+    private parseExcelDate(vDate: unknown): Date | null {
+        if (vDate instanceof Date && !Number.isNaN(vDate.getTime())) {
+            return vDate;
+        }
+        if (typeof vDate === "number" && Number.isFinite(vDate)) {
+            const iEpoch = Date.UTC(1899, 11, 30);
+            const oDate = new Date(iEpoch + Math.round(vDate * 86400000));
+            return Number.isNaN(oDate.getTime()) ? null : oDate;
+        }
+        if (typeof vDate === "string" && vDate.trim()) {
+            const oDate = new Date(vDate.trim());
+            return Number.isNaN(oDate.getTime()) ? null : oDate;
+        }
+        return null;
+    }
+
+    private stringifyCellValue(vValue: unknown): string {
+        if (typeof vValue === "string") {
+            return vValue;
+        }
+        if (typeof vValue === "number" || typeof vValue === "boolean" || typeof vValue === "bigint") {
+            return `${vValue}`;
+        }
+        return "";
+    }
+
+    public onApprovePress(): void {
+        const oList = this.byId("idZcRapAbookList") as List;
+        
+        if (!oList) {
+            MessageBox.error("无法访问列表控件");
+            return;
+        }
+    
+        //const aSelectedItems = oList.getSelectedItems();
+        const aSelectedItems = oList.getItems();
+        
+        if (aSelectedItems.length === 0) {
+            MessageToast.show("请先选择要审批的记录");
+            return;
+        }
+    
+        MessageBox.confirm(
+            `确定要审批选中的 ${aSelectedItems.length} 条记录吗？`,
+            {
+                title: "审批确认",
+                actions: [MessageBox.Action.YES, MessageBox.Action.NO],
+                emphasizedAction: MessageBox.Action.YES,
+                onClose: (sAction: string | null) => {
+                    if (sAction === MessageBox.Action.YES) {
+                        this._executeApproveAction(aSelectedItems);
+                    }
+                }
+            }
+        );
+    }
+    
+private _executeApproveAction(aSelectedItems: any[]): void {
+    const oModel = this.getView()?.getModel() as any;
+    const oView = this.getView();
+    
+    if (!oModel) {
+        MessageBox.error("数据模型不可用");
+        return;
+    }
+    
+    if (oView) {
+        oView.setBusy(true);
+    }
+
+    const aPromises: Promise<void>[] = [];
+
+    aSelectedItems.forEach((oItem) => {
+        const oContext = oItem.getBindingContext();
+        if (!oContext) return;
+
+        const sBookingUuid = oContext.getProperty("booking_uuid");
+        if (!sBookingUuid) return;
+
+        // 调用全局 Function Import /approve
+        const oPromise = new Promise<void>((resolve, reject) => {
+            oModel.callFunction("/approve", {
+                method: "POST",
+                urlParameters: {
+                    booking_uuid: "06aa0d82-ff40-8ccc-1900-23e62eb11b24"
+                    //booking_uuid: `guid'${sBookingUuid}'`  // 注意格式：guid'uuid-value'
+                },
+                success: (oData: any) => {
+                    console.log("审批成功:", oData);
+                    resolve();
+                },
+                error: (oError: any) => {
+                    console.error("审批失败:", oError);
+                    reject(oError);
+                }
+            });
+        });
+        
+        aPromises.push(oPromise);
+    });
+
+    // 等待所有审批操作完成
+    Promise.allSettled(aPromises).then((aResults) => {
+        const iSuccessCount = aResults.filter(r => r.status === "fulfilled").length;
+        const iErrorCount = aResults.length - iSuccessCount;
+
+        if (oView) {
+            oView.setBusy(false);
+        }
+
+        // 刷新列表
+        const oList = this.byId("idZcRapAbookList") as List;
+        if (oList) {
+            oList.getBinding("items")?.refresh();
+            oList.removeSelections(true);
+        }
+
+        if (iErrorCount === 0) {
+            MessageToast.show(`✅ 审批成功: ${iSuccessCount} 条`);
+        } else {
+            MessageBox.warning(
+                `⚠️ 审批完成: ${iSuccessCount} 成功, ${iErrorCount} 失败`
+            );
+        }
+    });
+}
+
+private _executeApproveAction4(aSelectedItems: any[]): void {
+    const oModel = this.getView()?.getModel() as any;
+    const oView = this.getView();
+    
+    if (!oModel) {
+        MessageBox.error("数据模型不可用");
+        return;
+    }
+    
+    if (oView) {
+        oView.setBusy(true);
+    }
+
+    const aPromises: Promise<void>[] = [];
+
+    aSelectedItems.forEach((oItem) => {
+        const oContext = oItem.getBindingContext();
+        if (!oContext) return;
+
+        const sPath = oContext.getPath();  // 获取实体的完整路径，例如: /ZI_rap_abook_0309(guid'...')
+        //debugger;
+       // sPath = "/ZC_RAP_ABOOK_0309(guid'00AE0D82FF408CCC190023E62EB11B24')"
+        
+
+        // 创建 Promise 处理单个审批操作
+        const oPromise = new Promise<void>((resolve, reject) => {
+            // 调用 RAP action: <entity_path>/approve
+            oModel.callFunction("/ZC_RAP_ABOOK_0309(booking_uuid'06aa0d82-ff40-8ccc-1900-23e62eb11b24')" + "/approve", {
+                method: "POST",
+                success: (oData: any) => {
+                    console.log("审批成功:", oData);
+                    resolve();
+                },
+                error: (oError: any) => {
+                    console.error("审批失败:", oError);
+                    reject(oError);
+                }
+            });
+        });
+        
+        aPromises.push(oPromise);
+    });
+
+    // 等待所有审批操作完成
+    Promise.allSettled(aPromises).then((aResults) => {
+        const iSuccessCount = aResults.filter(r => r.status === "fulfilled").length;
+        const iErrorCount = aResults.length - iSuccessCount;
+
+        if (oView) {
+            oView.setBusy(false);
+        }
+
+        // 刷新列表
+        const oList = this.byId("idZcRapAbookList") as List;
+        if (oList) {
+            oList.getBinding("items")?.refresh();
+            oList.removeSelections(true);
+        }
+
+        if (iErrorCount === 0) {
+            MessageToast.show(`✅ 审批成功: ${iSuccessCount} 条`);
+        } else {
+            MessageBox.warning(
+                `⚠️ 审批完成: ${iSuccessCount} 成功, ${iErrorCount} 失败`,
+                {
+                    actions: [MessageBox.Action.OK],
+                    onClose: () => {
+                        // 可选：显示详细错误
+                        const aErrors = aResults
+                            .filter(r => r.status === "rejected")
+                            .map(r => (r as PromiseRejectedResult).reason);
+                        console.error("审批失败详情:", aErrors);
+                    }
+                }
+            );
+        }
+    });
+}
+
+     private _executeApproveAction3(aSelectedItems: any[]): void {
+        const oModel = this.getView()?.getModel() as any;
+        const sPath = "/approve"; // Function Import 路径
+        const oContext = aSelectedItems[0].getBindingContext();
+        if (!oContext) return;
+
+        const sPath1 = oContext.getPath(); 
+        debugger;
+        oModel.callFunction(sPath1+sPath, {
+            method: "POST", // 或 "GET"，取决于 Function Import 定义
+            urlParameters: {
+                travel_id: "2345",
+                booking_date: "20290808"
+            },
+            success: function(oData: any, oResponse: any) {
+                MessageToast.show("调用成功");
+            },
+            error: function(oError: any) {
+                MessageToast.show("调用失败: " + oError.message);
+            }
+        });
+
+     }
+    private _executeApproveAction2(aSelectedItems: any[]): void {
+        const oModel = this.getView()?.getModel() as any;
+        const oView = this.getView();
+        
+        if (!oModel) {
+            MessageBox.error("数据模型不可用");
+            if (oView) {
+                oView.setBusy(false);
+            }
+            return;
+        }
+        
+        if (oView) {
+            oView.setBusy(true);
+        }
+    
+        // 启用批量模式
+        oModel.setUseBatch(true);
+        
+        // 清除之前的批量操作
+        oModel.resetChanges();
+        
+        // 为每个选中项创建审批请求
+        const aPromises: Promise<void>[] = [];
+        
+        aSelectedItems.forEach((oItem) => {
+            const oContext = oItem.getBindingContext();
+            if (!oContext) return;
+    
+            const sPath = oContext.getPath();
+            
+            // 创建一个 Promise 来处理单个审批操作
+            const oPromise = new Promise<void>((resolve, reject) => {
+                // 直接调用 approve 函数
+                oModel.callFunction(sPath + "/approve", {
+                    method: "POST",
+                    success: () => {
+                        resolve();
+                    },
+                    error: (oError: any) => {
+                        reject(oError);
+                    }
+                });
+            });
+            
+            aPromises.push(oPromise);
+        });
+    
+        // 提交所有批量操作
+        oModel.submitChanges({
+            success: (oData: any) => {
+                console.log("审批成功:", oData);
+                
+                const oList = this.byId("idZcRapAbookList") as List;
+                if (oList) {
+                    oList.getBinding("items")?.refresh();
+                    oList.removeSelections(true);
+                }
+                
+                if (oView) {
+                    oView.setBusy(false);
+                }
+                
+                MessageToast.show(`✅ 审批成功: ${aSelectedItems.length} 条`);
+            },
+            error: (oError: any) => {
+                console.error("审批失败:", oError);
+                
+                if (oView) {
+                    oView.setBusy(false);
+                }
+                
+                MessageBox.error(oError.message || "审批失败");
+            }
+        });
+    }
+}
+
+
+
+-------------------------------------------------------------------------
+
+ <mvc:View controllerName="prosapui5.controller.View1"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    xmlns:unified="sap.ui.unified"
+    xmlns:core="sap.ui.core">
+    <Page id="idPagePage" title="{i18n>title}">
+        <headerContent>
+            <Button text="Add" icon="sap-icon://add" press="onAddButtonPress"/>
+            <Button text="Approve" icon="sap-icon://accept" press="onApprovePress"/>
+            <Button text="Export Excel" icon="sap-icon://excel-attachment" press="onExportExcelPress"/>
+            <unified:FileUploader
+                id="excelUploader"
+                buttonOnly="true"
+                buttonText="Import Excel"
+                sameFilenameAllowed="true"
+                uploadOnChange="false"
+                fileType="xlsx,xls"
+                change="onImportFileChange"/>
+        </headerContent>
+        <content>
+            <SearchField id="idSearchField" search="onSearchFieldSearch" placeholder="Search by Travel ID" width="100%"/>
+            <List id="idZcRapAbookList" mode="Delete" delete="onDeletePress" items="{path: '/ZC_RAP_ABOOK_0309'}">
+                <items>
+                    <ObjectListItem
+                        title="{travel_id}"
+                        number="{booking_date}"
+                        numberUnit="Booking Date"
+                        type="Active"
+                        press="onItemPress">
+                        <attributes>
+                            <ObjectAttribute title="Booking UUID" text="{booking_uuid}"/>
+                            <ObjectAttribute title="Travel UUID" text="{travel_uuid}"/>
+                        </attributes>
+                    </ObjectListItem>
+                </items>
+                <noData>
+                    <Text text="No bookings found"/>
+                </noData>
+            </List>
+        </content>
+        <dependents>
+            <Dialog id="bookingDialog" title="Booking Details" class="sapUiResponsivePadding">
+                <form:SimpleForm id="bookingForm" layout="ResponsiveGridLayout" xmlns:form="sap.ui.layout.form">
+                    <form:content>
+                        <Label text="Travel ID"/>
+                        <Input id="travelIdInput" value="{travel_id}"/>
+                        <Label text="Booking Date"/>
+                        <DatePicker id="bookingDateInput" value="{booking_date}" valueFormat="yyyy-MM-dd" displayFormat="long"/>
+                        <Label text="Travel UUID"/>
+                        <Input id="travelUuidInput" value="{travel_uuid}"/>
+                    </form:content>
+                </form:SimpleForm>
+                <beginButton>
+                    <Button text="Save" press="onSavePress"/>
+                </beginButton>
+                <endButton>
+                    <Button text="Cancel" press="onCancelPress"/>
+                </endButton>
+            </Dialog>
+        </dependents>
+    </Page>
+</mvc:View>             
+
+
+
+
+
+
+
+
+
+
+
+              
